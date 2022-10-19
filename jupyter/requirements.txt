@@ -1,0 +1,6 @@
+psycopg2-binary~=2.8
+statsmodels
+scikit-learn
+findspark
+boto3
+

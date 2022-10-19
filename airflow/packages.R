@@ -1,0 +1,7 @@
+install.packages('sparklyr',repos = "http://cran.r-project.org")
+install.packages('carrier',repos = "http://cran.r-project.org")
+install.packages('mlflow',repos = "http://cloud.r-project.org")
+install.packages('ggplot2',repos = "http://cran.r-project.org")
+install.packages('carrier',repos = "http://cran.r-project.org")
+install.packages('reticulate',repos = "http://cran.r-project.org")
+install.packages('lubridate',repos = "http://cran.r-project.org")
