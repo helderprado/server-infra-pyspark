@@ -2,6 +2,8 @@ shared/@bronze
 shared/@gold
 shared/@silver
 
+spark/data
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

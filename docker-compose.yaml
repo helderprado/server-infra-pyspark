@@ -1,13 +1,12 @@
 version: "3.6"
 
 services:
-
   jupyter:
     build: ./jupyter
-    container_name: jupyter
+    container_name: JupyterLab
     environment:
-      - JUPYTER_ENABLE_LAB: "yes"
-      - PYSPARK_SUBMIT_ARGS: --packages com.amazonaws:aws-java-sdk-bundle:1.11.819,org.apache.hadoop:hadoop-aws:3.2.3 pyspark-shell
+      - JUPYTER_ENABLE_LAB="yes"
+      - PYSPARK_SUBMIT_ARGS=--packages com.amazonaws:aws-java-sdk-bundle:1.11.819,org.apache.hadoop:hadoop-aws:3.2.3 pyspark-shell
       - PASSWORD=rstudio1
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
@@ -27,6 +26,7 @@ services:
 
   s3:
     image: minio/minio:RELEASE.2021-11-24T23-19-33Z
+    container_name: MinIO
     restart: unless-stopped
     ports:
       - "9000:9000"
@@ -34,16 +34,16 @@ services:
     environment:
       - MINIO_ROOT_USER=${AWS_ACCESS_KEY_ID}
       - MINIO_ROOT_PASSWORD=${AWS_SECRET_ACCESS_KEY}
-    command: server /data --console-address ":9001"
+    command: server /spark/data --console-address ":9001"
     volumes:
-      - minio_volume:/data
+      - minio_volume:/spark/data
     networks:
       - server
 
   db:
     image: mysql/mysql-server:5.7.28
     restart: unless-stopped
-    container_name: mlflow_db
+    container_name: MlFlowDatabase
     expose:
       - "3306"
     environment:
@@ -57,7 +57,7 @@ services:
       - server
 
   mlflow:
-    container_name: tracker_mlflow
+    container_name: MlFlow
     image: tracker_ml
     restart: unless-stopped
     build:
@@ -75,6 +75,7 @@ services:
       - server
 
   create_s3_buckets:
+    container_name: CreateS3Bucket
     image: minio/mc
     depends_on:
       - "s3"
@@ -88,17 +89,19 @@ services:
       - server
 
   postgres:
+    container_name: AirFlowDatabase
     image: postgres:9.6
     environment:
       - POSTGRES_USER=airflow
       - POSTGRES_PASSWORD=airflow
       - POSTGRES_DB=airflow
     volumes:
-      - /tmp/postgres-data:/var/lib/postgresql/data
+      - /tmp/postgres-data:/var/lib/postgresql/spark/data
     networks:
       - server
 
   airflow-webserver:
+    container_name: AirFlow
     build:
       context: ./airflow
       dockerfile: Dockerfile
@@ -127,11 +130,74 @@ services:
       timeout: 30s
       retries: 3
 
+  spark-master:
+    container_name: SparkMaster
+    build:
+      context: ./spark/build
+      dockerfile: Dockerfile
+    ports:
+      - "9090:8080"
+      - "7077:7077"
+    volumes:
+      - ./spark/apps:/opt/spark-apps
+      - ./spark/data:/opt/spark-data
+    environment:
+      - SPARK_LOCAL_IP=spark-master
+      - SPARK_WORKLOAD=master
+    networks:
+      - server
+
+  spark-worker-a:
+    container_name: SparkWorkerA
+    build:
+      context: ./spark/build
+      dockerfile: Dockerfile
+    ports:
+      - "9091:8080"
+      - "7000:7000"
+    depends_on:
+      - spark-master
+    environment:
+      - SPARK_MASTER=spark://spark-master:7077
+      - SPARK_WORKER_CORES=1
+      - SPARK_WORKER_MEMORY=1G
+      - SPARK_DRIVER_MEMORY=1G
+      - SPARK_EXECUTOR_MEMORY=1G
+      - SPARK_WORKLOAD=worker
+      - SPARK_LOCAL_IP=spark-worker-a
+    volumes:
+      - ./spark/apps:/opt/spark-apps
+      - ./spark/data:/opt/spark-data
+    networks:
+      - server
+
+  spark-worker-b:
+    container_name: SparkWorkerB
+    build:
+      context: ./spark/build
+      dockerfile: Dockerfile
+    ports:
+      - "9092:8080"
+      - "7001:7000"
+    depends_on:
+      - spark-master
+    environment:
+      - SPARK_MASTER=spark://spark-master:7077
+      - SPARK_WORKER_CORES=1
+      - SPARK_WORKER_MEMORY=1G
+      - SPARK_DRIVER_MEMORY=1G
+      - SPARK_EXECUTOR_MEMORY=1G
+      - SPARK_WORKLOAD=worker
+      - SPARK_LOCAL_IP=spark-worker-b
+    volumes:
+      - ./spark/apps:/opt/spark-apps
+      - ./spark/data:/opt/spark-data
+    networks:
+      - server
+
 networks:
   server:
 
 volumes:
   db_volume:
   minio_volume:
-  r_libs:
-  rstudio:

@@ -148,21 +148,6 @@ RUN apt update -qq
 
 RUN apt-get install --no-install-recommends software-properties-common dirmngr
 
-RUN apt-key adv --keyserver keyserver.ubuntu.com --recv-key '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7'
-
-RUN add-apt-repository "deb https://cloud.r-project.org/bin/linux/debian stretch-cran35/"
-
-RUN apt-get update -yqq \
-    && apt-get upgrade -yqq
-
-RUN apt-get install -y r-base
-
-RUN R --version
-
-COPY packages.R .
-
-RUN Rscript packages.R
-
 USER airflow
 WORKDIR ${AIRFLOW_HOME}
 ENTRYPOINT ["/entrypoint.sh"]
