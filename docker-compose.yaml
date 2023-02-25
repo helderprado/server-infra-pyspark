@@ -262,7 +262,6 @@ networks:
 
 volumes:
   db_volume:
-  minio_volume:
   data1-1:
   data1-2:
   data2-1:

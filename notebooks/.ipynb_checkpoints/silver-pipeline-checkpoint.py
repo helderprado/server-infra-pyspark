@@ -13,8 +13,8 @@ def elt_raw_silver():
         .config("spark.hadoop.fs.s3a.aws.credentials.provider", "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider") \
         .config("spark.hadoop.fs.s3a.access.key", os.environ['AWS_ACCESS_KEY_ID']) \
         .config("spark.hadoop.fs.s3a.secret.key", os.environ['AWS_SECRET_ACCESS_KEY']) \
-        .config("spark.hadoop.fs.s3a.proxy.host", "s3") \
-        .config("spark.hadoop.fs.s3a.endpoint", "s3") \
+        .config("spark.hadoop.fs.s3a.proxy.host", "minio1") \
+        .config("spark.hadoop.fs.s3a.endpoint", "minio1") \
         .config("spark.hadoop.fs.s3a.proxy.port", "9000") \
         .config("spark.hadoop.fs.s3a.path.style.access", "true") \
         .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false") \
