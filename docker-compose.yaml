@@ -1,5 +1,22 @@
 version: "3.6"
 
+x-minio-common: &minio-common
+  image: quay.io/minio/minio:RELEASE.2023-02-22T18-23-45Z
+  command: server --console-address ":9001" http://minio{1...4}/data{1...2}
+  expose:
+    - "9000"
+    - "9001"
+  environment:
+    - MINIO_ROOT_USER=${AWS_ACCESS_KEY_ID}
+    - MINIO_ROOT_PASSWORD=${AWS_SECRET_ACCESS_KEY}
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+    interval: 30s
+    timeout: 20s
+    retries: 3
+  networks:
+    - server
+
 services:
   jupyter:
     build: ./jupyter
@@ -9,7 +26,7 @@ services:
       - PYSPARK_SUBMIT_ARGS= --master spark://spark-master:7077 --packages com.amazonaws:aws-java-sdk-bundle:1.11.819,org.apache.hadoop:hadoop-aws:3.2.3 pyspark-shell
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - MLFLOW_S3_ENDPOINT_URL=http://s3:9000
+      - MLFLOW_S3_ENDPOINT_URL=http://minio1:9000
     ports:
       - "9999:9999"
     entrypoint:
@@ -23,21 +40,21 @@ services:
     networks:
       - server
 
-  s3:
-    container_name: MinIO
-    image: minio/minio:RELEASE.2021-11-24T23-19-33Z
-    restart: unless-stopped
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    environment:
-      - MINIO_ROOT_USER=${AWS_ACCESS_KEY_ID}
-      - MINIO_ROOT_PASSWORD=${AWS_SECRET_ACCESS_KEY}
-    command: server /data --console-address ":9001"
-    volumes:
-      - minio_volume:/data
-    networks:
-      - server
+  # minio:
+  #   container_name: MinIO
+  #   image: minio/minio:RELEASE.2021-11-24T23-19-33Z
+  #   restart: unless-stopped
+  #   ports:
+  #     - "9000:9000"
+  #     - "9001:9001"
+  #   environment:
+  #     - MINIO_ROOT_USER=${AWS_ACCESS_KEY_ID}
+  #     - MINIO_ROOT_PASSWORD=${AWS_SECRET_ACCESS_KEY}
+  #   command: server /data --console-address ":9001"
+  #   volumes:
+  #     - minio_volume:/data
+  #   networks:
+  #     - server
 
   db:
     container_name: MlFlowDatabase
@@ -68,7 +85,7 @@ services:
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - AWS_DEFAULT_REGION=${AWS_REGION}
-      - MLFLOW_S3_ENDPOINT_URL=http://s3:9000
+      - MLFLOW_S3_ENDPOINT_URL=http://minio:9000
     entrypoint: bash ./wait-for-it.sh db:3306 -t 90 -- mlflow server --backend-store-uri mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE} --default-artifact-root s3://${AWS_BUCKET_NAME}/ -h 0.0.0.0
     networks:
       - server
@@ -77,11 +94,17 @@ services:
     container_name: CreateS3Bucket
     image: minio/mc
     depends_on:
-      - "s3"
+      - minio1
+      - minio2
+      - minio3
+      - minio4
     entrypoint: >
       /bin/sh -c "
-      until (/usr/bin/mc alias set minio http://s3:9000 '${AWS_ACCESS_KEY_ID}' '${AWS_SECRET_ACCESS_KEY}') do echo '...waiting...' && sleep 1; done;
+      until (/usr/bin/mc alias set minio http://minio1:9000 '${AWS_ACCESS_KEY_ID}' '${AWS_SECRET_ACCESS_KEY}') do echo '...waiting...' && sleep 1; done;
       /usr/bin/mc mb minio/mlflow;
+      /usr/bin/mc mb minio/raw;
+      /usr/bin/mc mb minio/silver;
+      /usr/bin/mc mb minio/gold;
       exit 0;
       "
     networks:
@@ -115,11 +138,10 @@ services:
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - AWS_DEFAULT_REGION=${AWS_REGION}
-      - MLFLOW_S3_ENDPOINT_URL=http://s3:9000
+      - PYSPARK_SUBMIT_ARGS= --master spark://spark-master:7077 --packages com.amazonaws:aws-java-sdk-bundle:1.11.819,org.apache.hadoop:hadoop-aws:3.2.3 pyspark-shell
+      - MLFLOW_S3_ENDPOINT_URL=http://minio1:9000
     volumes:
-      - ./shared:/usr/local/airflow/dags #DAG folder
-      - ./shared:/usr/local/spark/app #Spark Scripts (Must be the same path in airflow and Spark Cluster)
-      - ./shared:/usr/local/spark/resources #Resources folder (Must be the same path in airflow and Spark Cluster)
+      - ./notebooks:/usr/local/airflow/dags
     ports:
       - "8282:8282"
     command: webserver
@@ -138,8 +160,7 @@ services:
       - "9090:8080"
       - "7077:7077"
     volumes:
-      - ./spark/apps:/opt/spark-apps
-      - ./spark/data:/opt/spark-data
+      - ./notebooks:/home/jovyan/work:rw
     environment:
       - SPARK_LOCAL_IP=spark-master
       - SPARK_WORKLOAD=master
@@ -165,8 +186,7 @@ services:
       - SPARK_WORKLOAD=worker
       - SPARK_LOCAL_IP=spark-worker-a
     volumes:
-      - ./spark/apps:/opt/spark-apps
-      - ./spark/data:/opt/spark-data
+      - ./notebooks:/home/jovyan/work:rw
     networks:
       - server
 
@@ -189,8 +209,51 @@ services:
       - SPARK_WORKLOAD=worker
       - SPARK_LOCAL_IP=spark-worker-b
     volumes:
-      - ./spark/apps:/opt/spark-apps
-      - ./spark/data:/opt/spark-data
+      - ./notebooks:/home/jovyan/work:rw
+    networks:
+      - server
+
+  minio1:
+    <<: *minio-common
+    hostname: minio1
+    volumes:
+      - data1-1:/data1
+      - data1-2:/data2
+
+  minio2:
+    <<: *minio-common
+    hostname: minio2
+    volumes:
+      - data2-1:/data1
+      - data2-2:/data2
+
+  minio3:
+    <<: *minio-common
+    hostname: minio3
+    volumes:
+      - data3-1:/data1
+      - data3-2:/data2
+
+  minio4:
+    <<: *minio-common
+    hostname: minio4
+    volumes:
+      - data4-1:/data1
+      - data4-2:/data2
+
+  nginx:
+    image: nginx:1.19.2-alpine
+    hostname: nginx
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    depends_on:
+      - minio1
+      - minio2
+      - minio3
+      - minio4
     networks:
       - server
 
@@ -200,3 +263,11 @@ networks:
 volumes:
   db_volume:
   minio_volume:
+  data1-1:
+  data1-2:
+  data2-1:
+  data2-2:
+  data3-1:
+  data3-2:
+  data4-1:
+  data4-2:
