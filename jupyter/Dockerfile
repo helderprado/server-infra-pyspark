@@ -1,4 +1,4 @@
-FROM jupyter/all-spark-notebook:latest
+FROM jupyter/all-spark-notebook:spark-3.3.0
 
 COPY ./requirements.txt .
 

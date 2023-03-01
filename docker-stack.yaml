@@ -1,4 +1,4 @@
-version: "3.6"
+version: "3.9"
 
 x-minio-common: &minio-common
   image: quay.io/minio/minio:RELEASE.2023-02-22T18-23-45Z
@@ -20,7 +20,6 @@ x-minio-common: &minio-common
 services:
   jupyter:
     build: ./jupyter
-    container_name: JupyterLab
     environment:
       - JUPYTER_ENABLE_LAB="yes"
       - PYSPARK_SUBMIT_ARGS= --master spark://spark-master:7077 --packages com.amazonaws:aws-java-sdk-bundle:1.11.819,org.apache.hadoop:hadoop-aws:3.2.3 pyspark-shell
@@ -41,7 +40,6 @@ services:
       - server
 
   db:
-    container_name: MlFlowDatabase
     image: mysql/mysql-server:5.7.28
     restart: unless-stopped
     expose:
@@ -57,8 +55,6 @@ services:
       - server
 
   mlflow:
-    container_name: MlFLow
-    image: tracker_ml
     restart: unless-stopped
     build:
       context: ./mlflow
@@ -75,7 +71,6 @@ services:
       - server
 
   create_s3_buckets:
-    container_name: CreateS3Bucket
     image: minio/mc
     depends_on:
       - minio1
@@ -95,7 +90,6 @@ services:
       - server
 
   postgres:
-    container_name: AirFlowDatabase
     image: postgres:9.6
     environment:
       - POSTGRES_USER=airflow
@@ -107,7 +101,6 @@ services:
       - server
 
   airflow-webserver:
-    container_name: AirFlow
     build:
       context: ./airflow
       dockerfile: Dockerfile
@@ -136,7 +129,6 @@ services:
       retries: 3
 
   spark-master:
-    container_name: SparkMaster
     build:
       context: ./spark/build
       dockerfile: Dockerfile
@@ -152,7 +144,6 @@ services:
       - server
 
   spark-worker-a:
-    container_name: SparkWorkerA
     build:
       context: ./spark/build
       dockerfile: Dockerfile
@@ -163,10 +154,10 @@ services:
       - spark-master
     environment:
       - SPARK_MASTER=spark://spark-master:7077
-      - SPARK_WORKER_CORES=1
-      - SPARK_WORKER_MEMORY=1G
-      - SPARK_DRIVER_MEMORY=1G
-      - SPARK_EXECUTOR_MEMORY=1G
+      - SPARK_WORKER_CORES=8
+      - SPARK_WORKER_MEMORY=16G
+      - SPARK_DRIVER_MEMORY=16G
+      - SPARK_EXECUTOR_MEMORY=16G
       - SPARK_WORKLOAD=worker
       - SPARK_LOCAL_IP=spark-worker-a
     volumes:
@@ -175,7 +166,6 @@ services:
       - server
 
   spark-worker-b:
-    container_name: SparkWorkerB
     build:
       context: ./spark/build
       dockerfile: Dockerfile
@@ -186,10 +176,32 @@ services:
       - spark-master
     environment:
       - SPARK_MASTER=spark://spark-master:7077
-      - SPARK_WORKER_CORES=1
-      - SPARK_WORKER_MEMORY=1G
-      - SPARK_DRIVER_MEMORY=1G
-      - SPARK_EXECUTOR_MEMORY=1G
+      - SPARK_WORKER_CORES=8
+      - SPARK_WORKER_MEMORY=16G
+      - SPARK_DRIVER_MEMORY=16G
+      - SPARK_EXECUTOR_MEMORY=16G
+      - SPARK_WORKLOAD=worker
+      - SPARK_LOCAL_IP=spark-worker-b
+    volumes:
+      - ./notebooks:/home/jovyan/work:rw
+    networks:
+      - server
+
+  spark-worker-c:
+    build:
+      context: ./spark/build
+      dockerfile: Dockerfile
+    ports:
+      - "9093:8080"
+      - "7002:7000"
+    depends_on:
+      - spark-master
+    environment:
+      - SPARK_MASTER=spark://spark-master:7077
+      - SPARK_WORKER_CORES=8
+      - SPARK_WORKER_MEMORY=16G
+      - SPARK_DRIVER_MEMORY=16G
+      - SPARK_EXECUTOR_MEMORY=16G
       - SPARK_WORKLOAD=worker
       - SPARK_LOCAL_IP=spark-worker-b
     volumes:
