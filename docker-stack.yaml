@@ -1,14 +1,11 @@
-version: "3.9"
+version: "3.7"
 
 x-minio-common: &minio-common
   image: quay.io/minio/minio:RELEASE.2023-02-22T18-23-45Z
   command: server --console-address ":9001" http://minio{1...4}/data{1...2}
-  expose:
-    - "9000"
-    - "9001"
   environment:
-    - MINIO_ROOT_USER=${AWS_ACCESS_KEY_ID}
-    - MINIO_ROOT_PASSWORD=${AWS_SECRET_ACCESS_KEY}
+    - MINIO_ROOT_USER=admin
+    - MINIO_ROOT_PASSWORD=sample_key
   healthcheck:
     test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
     interval: 30s
@@ -19,21 +16,22 @@ x-minio-common: &minio-common
 
 services:
   jupyter:
-    build: ./jupyter
+    hostname: jupyter
+    image: helderprado/jupyter-stack-server
     environment:
       - JUPYTER_ENABLE_LAB="yes"
       - PYSPARK_SUBMIT_ARGS= --master spark://spark-master:7077 --packages com.amazonaws:aws-java-sdk-bundle:1.11.819,org.apache.hadoop:hadoop-aws:3.2.3 pyspark-shell
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_ACCESS_KEY_ID=admin
+      - AWS_SECRET_ACCESS_KEY=sample_key
       - MLFLOW_S3_ENDPOINT_URL=http://minio1:9000
     ports:
-      - "9999:9999"
+      - "8888:8888"
     entrypoint:
       - bash
     command:
       - -c
       - |
-        jupyter lab --ip=0.0.0.0 --port=9999 --allow-root --no-browser --NotebookApp.notebook_dir='/home/jovyan/work' --NotebookApp.token=''
+        jupyter lab --ip=0.0.0.0 --port=8888 --allow-root --no-browser --NotebookApp.notebook_dir='/home/jovyan/work' --NotebookApp.token=''
     volumes:
       - ./notebooks:/home/jovyan/work
     networks:
@@ -41,100 +39,24 @@ services:
 
   db:
     image: mysql/mysql-server:5.7.28
-    restart: unless-stopped
-    expose:
-      - "3306"
     environment:
-      - MYSQL_DATABASE=${MYSQL_DATABASE}
-      - MYSQL_USER=${MYSQL_USER}
-      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
-      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - MYSQL_DATABASE=mlflow
+      - MYSQL_USER=mlflow_user
+      - MYSQL_PASSWORD=mlflow_password
+      - MYSQL_ROOT_PASSWORD=toor
     volumes:
       - db_volume:/var/lib/mysql
     networks:
       - server
 
-  mlflow:
-    restart: unless-stopped
-    build:
-      context: ./mlflow
-      dockerfile: Dockerfile
-    ports:
-      - "5000:5000"
-    environment:
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - AWS_DEFAULT_REGION=${AWS_REGION}
-      - MLFLOW_S3_ENDPOINT_URL=http://minio:9000
-    entrypoint: bash ./wait-for-it.sh db:3306 -t 90 -- mlflow server --backend-store-uri mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE} --default-artifact-root s3://${AWS_BUCKET_NAME}/ -h 0.0.0.0
-    networks:
-      - server
-
-  create_s3_buckets:
-    image: minio/mc
-    depends_on:
-      - minio1
-      - minio2
-      - minio3
-      - minio4
-    entrypoint: >
-      /bin/sh -c "
-      until (/usr/bin/mc alias set minio http://minio1:9000 '${AWS_ACCESS_KEY_ID}' '${AWS_SECRET_ACCESS_KEY}') do echo '...waiting...' && sleep 1; done;
-      /usr/bin/mc mb minio/mlflow;
-      /usr/bin/mc mb minio/raw;
-      /usr/bin/mc mb minio/silver;
-      /usr/bin/mc mb minio/gold;
-      exit 0;
-      "
-    networks:
-      - server
-
-  postgres:
-    image: postgres:9.6
-    environment:
-      - POSTGRES_USER=airflow
-      - POSTGRES_PASSWORD=airflow
-      - POSTGRES_DB=airflow
-    volumes:
-      - /tmp/postgres-data:/var/lib/postgresql/data
-    networks:
-      - server
-
-  airflow-webserver:
-    build:
-      context: ./airflow
-      dockerfile: Dockerfile
-    restart: always
-    networks:
-      - server
-    depends_on:
-      - postgres
-    environment:
-      - LOAD_EX=n
-      - EXECUTOR=Local
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - AWS_DEFAULT_REGION=${AWS_REGION}
-      - PYSPARK_SUBMIT_ARGS= --master spark://spark-master:7077 --packages com.amazonaws:aws-java-sdk-bundle:1.11.819,org.apache.hadoop:hadoop-aws:3.2.3 pyspark-shell
-      - MLFLOW_S3_ENDPOINT_URL=http://minio1:9000
-    volumes:
-      - ./notebooks:/usr/local/airflow/dags
-    ports:
-      - "8282:8282"
-    command: webserver
-    healthcheck:
-      test: ["CMD-SHELL", "[ -f /usr/local/airflow/airflow-webserver.pid ]"]
-      interval: 30s
-      timeout: 30s
-      retries: 3
-
   spark-master:
-    build:
-      context: ./spark/build
-      dockerfile: Dockerfile
+    image: helderprado/spark-stack-server
+    hostname: spark-master
     ports:
-      - "9090:8080"
-      - "7077:7077"
+      - 4040:4040
+      - 6066:6066
+      - 7077:7077
+      - 8080:8080
     volumes:
       - ./notebooks:/home/jovyan/work:rw
     environment:
@@ -144,20 +66,18 @@ services:
       - server
 
   spark-worker-a:
-    build:
-      context: ./spark/build
-      dockerfile: Dockerfile
+    hostname: spark-worker-a
+    image: helderprado/spark-stack-server
     ports:
-      - "9091:8080"
-      - "7000:7000"
+      - 8081:8081
     depends_on:
       - spark-master
     environment:
       - SPARK_MASTER=spark://spark-master:7077
-      - SPARK_WORKER_CORES=8
-      - SPARK_WORKER_MEMORY=16G
-      - SPARK_DRIVER_MEMORY=16G
-      - SPARK_EXECUTOR_MEMORY=16G
+      - SPARK_WORKER_CORES=1
+      - SPARK_WORKER_MEMORY=1G
+      - SPARK_DRIVER_MEMORY=1G
+      - SPARK_EXECUTOR_MEMORY=1G
       - SPARK_WORKLOAD=worker
       - SPARK_LOCAL_IP=spark-worker-a
     volumes:
@@ -166,20 +86,18 @@ services:
       - server
 
   spark-worker-b:
-    build:
-      context: ./spark/build
-      dockerfile: Dockerfile
+    hostname: spark-worker-b
+    image: helderprado/spark-stack-server
     ports:
-      - "9092:8080"
-      - "7001:7000"
+      - 8082:8082
     depends_on:
       - spark-master
     environment:
       - SPARK_MASTER=spark://spark-master:7077
-      - SPARK_WORKER_CORES=8
-      - SPARK_WORKER_MEMORY=16G
-      - SPARK_DRIVER_MEMORY=16G
-      - SPARK_EXECUTOR_MEMORY=16G
+      - SPARK_WORKER_CORES=1
+      - SPARK_WORKER_MEMORY=1G
+      - SPARK_DRIVER_MEMORY=1G
+      - SPARK_EXECUTOR_MEMORY=1G
       - SPARK_WORKLOAD=worker
       - SPARK_LOCAL_IP=spark-worker-b
     volumes:
@@ -187,27 +105,38 @@ services:
     networks:
       - server
 
-  spark-worker-c:
-    build:
-      context: ./spark/build
-      dockerfile: Dockerfile
+  postgres:
+    image: postgres:9.6
     ports:
-      - "9093:8080"
-      - "7002:7000"
-    depends_on:
-      - spark-master
+      - "15432:5432"
     environment:
-      - SPARK_MASTER=spark://spark-master:7077
-      - SPARK_WORKER_CORES=8
-      - SPARK_WORKER_MEMORY=16G
-      - SPARK_DRIVER_MEMORY=16G
-      - SPARK_EXECUTOR_MEMORY=16G
-      - SPARK_WORKLOAD=worker
-      - SPARK_LOCAL_IP=spark-worker-b
+      - POSTGRES_USER=airflow
+      - POSTGRES_PASSWORD=airflow
+      - POSTGRES_DB=airflow
     volumes:
-      - ./notebooks:/home/jovyan/work:rw
+      - airflow_db:/var/lib/postgresql/data
     networks:
       - server
+
+  airflow-webserver:
+    image: helderprado/airflow-stack-server
+    networks:
+      - server
+    depends_on:
+      - postgres
+    environment:
+      - LOAD_EX=n
+      - EXECUTOR=Local
+      - AWS_ACCESS_KEY_ID=admin
+      - AWS_SECRET_ACCESS_KEY=sample_key
+      - AWS_DEFAULT_REGION=us-east-1
+      - PYSPARK_SUBMIT_ARGS= --master spark://spark-master:7077 --packages com.amazonaws:aws-java-sdk-bundle:1.11.819,org.apache.hadoop:hadoop-aws:3.2.3 pyspark-shell
+      - MLFLOW_S3_ENDPOINT_URL=http://minio1:9000
+    volumes:
+      - ./notebooks:/usr/local/airflow/dags
+    ports:
+      - "8282:8282"
+    command: webserver
 
   minio1:
     <<: *minio-common
@@ -237,6 +166,19 @@ services:
       - data4-1:/data1
       - data4-2:/data2
 
+  mlflow:
+    image: helderprado/mlflow-stack-server
+    ports:
+      - "5000:5000"
+    environment:
+      - AWS_ACCESS_KEY_ID=admin
+      - AWS_SECRET_ACCESS_KEY=sample_key
+      - AWS_DEFAULT_REGION=us-east-1
+      - MLFLOW_S3_ENDPOINT_URL=http://minio1:9000
+    entrypoint: bash ./wait-for-it.sh db:3306 -t 90 -- mlflow server --backend-store-uri mysql+pymysql://mlflow_user:mlflow_password@db:3306/mlflow --default-artifact-root s3://mlflow/ -h 0.0.0.0
+    networks:
+      - server
+
   nginx:
     image: nginx:1.19.2-alpine
     hostname: nginx
@@ -257,6 +199,7 @@ networks:
   server:
 
 volumes:
+  airflow_db:
   db_volume:
   data1-1:
   data1-2:
